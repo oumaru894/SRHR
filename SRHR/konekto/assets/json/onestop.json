@@ -1,0 +1,14 @@
+[
+  {
+    "name": "John F. Kennedy Medical Center",
+    "latitude": 6.3133,
+    "longitude": -10.8014,
+    "services": "General care, maternity, SRHR"
+  },
+  {
+    "name": "Redemption Hospital",
+    "latitude": 6.365,
+    "longitude": -10.792,
+    "services": "Maternal health, HIV services"
+  }
+]
