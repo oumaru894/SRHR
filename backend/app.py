@@ -1,3 +1,4 @@
+# /backend/app.py
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
@@ -7,7 +8,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Ollama server endpoint
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_URL = "http://ollama:11434/api/generate"
 
 # SRHR System prompt
 SYSTEM_PROMPT = """
