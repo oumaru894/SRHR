@@ -8,7 +8,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Ollama server endpoint
-OLLAMA_URL = "http://ollama:11434/api/generate"
+OLLAMA_URL = "https://ollama-production-e9dd.up.railway.app/api/generate"
 
 # SRHR System prompt
 SYSTEM_PROMPT = """
