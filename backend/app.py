@@ -86,7 +86,7 @@ def make_ollama_request(prompt):
         response = requests.post(
             OLLAMA_URL,
             json={
-                "model": "phi",
+                "model": "tinyllama",
                 "prompt": prompt,
                 "stream": True
             },
