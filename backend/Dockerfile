@@ -16,10 +16,12 @@ COPY . .
 
 # Create non-root user
 RUN useradd --create-home --shell /bin/bash app
-USER app
 
-# Create logs directory
-RUN mkdir -p logs
+# Create logs directory and set ownership
+RUN mkdir -p /app/logs && chown -R app:app /app
+
+# Switch to non-root user
+USER app
 
 # Expose port
 EXPOSE 8000
