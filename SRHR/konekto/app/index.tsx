@@ -1,11 +1,12 @@
 // App.js
 // Correct:
 import * as React from 'react';
-import {useEffect} from 'react';// import { NavigationContainer } from '@react-navigation/native';
+//import {useEffect} from 'react';
+// import { NavigationContainer } from '@react-navigation/native';
 // import { createStackNavigator } from '@react-navigation/stack';
 // import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StyleSheet, View, StatusBar } from 'react-native';
-import { tfjsModelService } from '../src/services/TFJSModelService';
+// import { tfjsModelService } from '../src/services/TFJSModelService';
 
 
 
@@ -42,21 +43,6 @@ import Home from '../src/screens/Home';
 //const Stack = createStackNavigator();
 
 export default function Index() {
-
-  useEffect(() => {
-    // Initialize TensorFlow.js model on app start
-    const initializeModel = async () => {
-      try {
-        await tfjsModelService.initialize();
-      } catch (error) {
-        console.log('TF.js initialization failed, using fallbacks:', error);
-      }
-    };
-
-    initializeModel();
-  }, []);
-
-
   return (
     
     <Home/>
