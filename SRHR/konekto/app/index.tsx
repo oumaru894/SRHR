@@ -1,10 +1,12 @@
 // App.js
-import * as React, {useEffect} from 'react';
-// import { NavigationContainer } from '@react-navigation/native';
+// Correct:
+import * as React from 'react';
+import {useEffect} from 'react';// import { NavigationContainer } from '@react-navigation/native';
 // import { createStackNavigator } from '@react-navigation/stack';
 // import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StyleSheet, View, StatusBar } from 'react-native';
-import { tfjsModelService } from './services/TFJSModelService';
+import { tfjsModelService } from '../src/services/TFJSModelService';
+
 
 
 import Chatbot from '../src/screens/Chatbot';

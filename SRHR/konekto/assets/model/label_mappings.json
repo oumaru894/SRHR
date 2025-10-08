@@ -1,0 +1,35 @@
+{
+  "id2label": {
+    "0": "Legal Framework",
+    "1": "Rights & Principles",
+    "2": "Adolescent Health",
+    "3": "Maternal Health",
+    "4": "HIV & STIs",
+    "5": "GBV & Rights",
+    "6": "Family Planning",
+    "7": "Safe Abortion",
+    "8": "General SRH"
+  },
+  "label2id": {
+    "Legal Framework": 0,
+    "Rights & Principles": 1,
+    "Adolescent Health": 2,
+    "Maternal Health": 3,
+    "HIV & STIs": 4,
+    "GBV & Rights": 5,
+    "Family Planning": 6,
+    "Safe Abortion": 7,
+    "General SRH": 8
+  },
+  "categories": [
+    "Legal Framework",
+    "Rights & Principles",
+    "Adolescent Health",
+    "Maternal Health",
+    "HIV & STIs",
+    "GBV & Rights",
+    "Family Planning",
+    "Safe Abortion",
+    "General SRH"
+  ]
+}

@@ -86,7 +86,7 @@ def make_ollama_request(prompt):
         response = requests.post(
             OLLAMA_URL,
             json={
-                "model": "tinyllama",
+                "model": "gemma3n:latest",
                 "prompt": prompt,
                 "stream": True
             },

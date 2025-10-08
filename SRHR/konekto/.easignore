@@ -1,5 +1,3 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
-
 # dependencies
 node_modules/
 
@@ -8,14 +6,6 @@ node_modules/
 dist/
 web-build/
 expo-env.d.ts
-
-
-
-# other files
-*.mp4
-*.zip
-*.tar
-
 
 # Native
 .kotlin/
@@ -28,24 +18,29 @@ expo-env.d.ts
 
 # Metro
 .metro-health-check*
-
-# debug
 npm-debug.*
 yarn-debug.*
 yarn-error.*
 
-# macOS
+# System
 .DS_Store
 *.pem
 
-# local env files
+# Environment
 .env*.local
 
-# typescript
+# Build
 *.tsbuildinfo
 
-app-example
-
-# generated native folders
+# Example code
+app-example/
 /ios
 /android
+
+# Large assets (adjust as needed)
+*.mp4
+*.zip
+*.tar
+
+# Raw assets if they're large
+assets/raw/
