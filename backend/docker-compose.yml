@@ -1,15 +1,34 @@
-version: "3.8"
+version: "3.9"
 
 services:
+  llama-cpp:
+    image: 3x3cut0r/llama-cpp-python:latest
+    container_name: llama-cpp
+    cap_add:
+      - SYS_RESOURCE
+    environment:
+      MODEL_DOWNLOAD: "True"
+      MODEL_REPO: "TheBloke/Mistral-7B-Instruct-v0.2-GGUF"
+      MODEL: "mistral-7b-instruct-v0.2.Q4_K_M.gguf"
+      MODEL_ALIAS: "mistral-7b-instruct"
+      CHAT_FORMAT: "mistral"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./model:/model
+    restart: unless-stopped
 
   backend:
     build: .
-    container_name: ollama-backend
+    container_name: backend
     ports:
       - "5000:5000"
+    environment:
+      LLAMA_API_URL: "http://llama-cpp:8000/v1/chat/completions"
+    depends_on:
+      - llama-cpp
     volumes:
-      - backend_data:/backend/data
-
+      - ./backend_data:/app/data
     restart: unless-stopped
 
 volumes:

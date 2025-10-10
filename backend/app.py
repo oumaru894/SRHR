@@ -42,7 +42,7 @@ if not app.debug:
     app.logger.info('SRHR Chatbot startup')
 
 # Configuration
-OLLAMA_URL = os.environ.get('OLLAMA_URL', "https://ollama-production-e9dd.up.railway.app/api/generate")
+LLAMA_API_URL = os.environ.get('LLAMA_API_URL', "http://llama-cpp-python:8000/v1/chat/completions")
 REQUEST_TIMEOUT = int(os.environ.get('REQUEST_TIMEOUT', '120'))
 MAX_RESPONSE_LENGTH = int(os.environ.get('MAX_RESPONSE_LENGTH', '5000'))
 
@@ -79,58 +79,44 @@ def validate_prompt(prompt):
     return True, prompt.strip()
 
 def make_ollama_request(prompt):
-    """Make request to Ollama API with error handling"""
+    """Make request to local Llama.cpp API"""
     start_time = time.time()
-    
+
+    payload = {
+        "model": "mistral-7b-instruct",
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 512,
+        "stream": False
+    }
+
     try:
         response = requests.post(
-            OLLAMA_URL,
-            json={
-                "model": "tinyllama",
-                "prompt": prompt,
-                "stream": True
-            },
-            stream=True,
+            LLAMA_API_URL,
+            json=payload,
             timeout=REQUEST_TIMEOUT
         )
-        
+
         response.raise_for_status()
-        
-        complete_response = ""
-        for line in response.iter_lines():
-            if line:
-                try:
-                    json_response = json.loads(line.decode("utf-8"))
-                    if "response" in json_response:
-                        complete_response += json_response["response"]
-                        
-                        # Prevent excessively long responses
-                        if len(complete_response) > MAX_RESPONSE_LENGTH:
-                            app.logger.warning("Response exceeded maximum length")
-                            complete_response = complete_response[:MAX_RESPONSE_LENGTH] + "... [response truncated]"
-                            break
-                            
-                except json.JSONDecodeError as e:
-                    app.logger.error(f"JSON decode error: {e}")
-                    continue
-        
+        data = response.json()
+
+        bot_response = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         processing_time = time.time() - start_time
-        app.logger.info(f"Ollama request completed in {processing_time:.2f}s")
-        
-        return complete_response.strip()
-        
+        app.logger.info(f"Llama request completed in {processing_time:.2f}s")
+
+        return bot_response.strip()
+
     except requests.exceptions.Timeout:
-        app.logger.error("Ollama request timeout")
         raise OllamaServiceError("Request timeout - please try again")
     except requests.exceptions.ConnectionError:
-        app.logger.error("Ollama connection error")
-        raise OllamaServiceError("Cannot connect to AI service")
-    except requests.exceptions.HTTPError as e:
-        app.logger.error(f"Ollama HTTP error: {e}")
-        raise OllamaServiceError("AI service error")
+        raise OllamaServiceError("Cannot connect to local Llama API")
     except Exception as e:
         app.logger.error(f"Unexpected error: {e}")
         raise OllamaServiceError("Internal server error")
+
 
 @app.route("/health", methods=["GET"])
 def health_check():

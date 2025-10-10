@@ -1,8 +1,7 @@
 // App.js
 // Correct:
 import * as React from 'react';
-//import {useEffect} from 'react';
-// import { NavigationContainer } from '@react-navigation/native';
+import {useEffect} from 'react';// import { NavigationContainer } from '@react-navigation/native';
 // import { createStackNavigator } from '@react-navigation/stack';
 // import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StyleSheet, View, StatusBar } from 'react-native';
@@ -43,6 +42,9 @@ import Home from '../src/screens/Home';
 //const Stack = createStackNavigator();
 
 export default function Index() {
+
+  
+
   return (
     
     <Home/>
