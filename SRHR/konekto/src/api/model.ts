@@ -1,4 +1,4 @@
-import * as FileSystem from "expo-file-system/legacy";
+import RNFS from "react-native-fs";
 
 export const downloadModel = async (
   modelName: string,
@@ -6,50 +6,36 @@ export const downloadModel = async (
   onProgress: (progress: number) => void
 ): Promise<string> => {
   try {
-    if (!modelName || !modelUrl) {
-      throw new Error("Invalid model name or URL");
-    }
+    const destPath = `${RNFS.DocumentDirectoryPath}/${modelName}`;
 
-    const destPath = `${FileSystem.documentDirectory}${modelName}`;
-
-    // Delete existing file if it exists
-    const fileInfo = await FileSystem.getInfoAsync(destPath);
-    if (fileInfo.exists) {
-      await FileSystem.deleteAsync(destPath, { idempotent: true });
+    // Remove if existing
+    if (await RNFS.exists(destPath)) {
+      await RNFS.unlink(destPath);
       console.log(`Deleted existing file at ${destPath}`);
     }
 
-    console.log("Starting download from:", modelUrl);
+    console.log("Starting download from:", modelUrl); 
 
-    
-    // Set up download with progress tracking
-
-    const downloadResumable = FileSystem.createDownloadResumable(
-      modelUrl,
-      destPath,
-      {},
-      (downloadProgress) => {
-        const progress =
-          (downloadProgress.totalBytesWritten /
-            downloadProgress.totalBytesExpectedToWrite) *
-          100;
-        console.log("Download progress:", progress);
+    const download = RNFS.downloadFile({
+      fromUrl: modelUrl,
+      toFile: destPath,
+      background: true,
+      discretionary: true,
+      progress: res => {
+        const progress = (res.bytesWritten / res.contentLength) * 100;
         onProgress(Math.floor(progress));
-      }
-    );
+      },
+      progressDivider: 1,
+    });
 
-    const { uri } = await downloadResumable.downloadAsync();
-
-    console.log("Download completed:", uri);
-    return uri;
+    const result = await download.promise;
+    if (result.statusCode === 200) {
+      console.log("Download complete:", destPath);
+      return `file://${destPath}`;
+    } else {
+      throw new Error(`HTTP ${result.statusCode}`);
+    }
   } catch (error) {
-    throw new Error(
-      `Failed to download model: ${
-        error instanceof Error ? error.message : "Unknown error"
-      }`
-    );
+    throw new Error(`Failed to download model: ${error.message}`);
   }
 };
-
-
-

@@ -5,6 +5,7 @@
     "version": "1.0.0",
     "icon": "./assets/images/icon.png",
   "orientation": "portrait",
+  
   "splash": {
     "image": "./assets/images/splash-icon.png",
     "resizeMode": "contain",
@@ -15,7 +16,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.yourcompany.konekto",
+      "bundleIdentifier": "com.EffTech.konekto",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "This app needs access to your location to show nearby clinics and provide navigation.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "This app needs access to your location to show nearby clinics and provide navigation.",
@@ -46,6 +47,8 @@
     },
     "plugins": [
       "expo-router",
+      "@maplibre/maplibre-react-native",
+      
       [
         "expo-splash-screen",
         {
@@ -70,6 +73,7 @@
       "reactCompiler": true
     },
     "extra": {
+       "MAPTILER_KEY": "a1yL3ePPtor5G78wv2M6",
       "router": {},
       "eas": {
         "projectId": "f5be95cb-0773-48c9-8950-38abf08d3c1a"

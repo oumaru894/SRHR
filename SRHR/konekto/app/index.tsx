@@ -5,7 +5,10 @@ import {useEffect} from 'react';// import { NavigationContainer } from '@react-n
 // import { createStackNavigator } from '@react-navigation/stack';
 // import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StyleSheet, View, StatusBar } from 'react-native';
-// import { tfjsModelService } from '../src/services/TFJSModelService';
+
+
+// offline detection import
+import { NetworkProvider } from "../src/context/NetworkContext";
 
 
 
@@ -41,15 +44,19 @@ import Home from '../src/screens/Home';
 
 //const Stack = createStackNavigator();
 
+
 export default function Index() {
 
   
 
   return (
+    <NetworkProvider>
+      <Home/>
+    </NetworkProvider>
     
-    <Home/>
     
   );
+
 }
 
 const styles = StyleSheet.create({
@@ -61,3 +68,7 @@ const styles = StyleSheet.create({
     flex: 1,
   }
 });
+
+
+
+

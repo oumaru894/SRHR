@@ -1,313 +1,358 @@
-import React, { useEffect, useRef, useState } from 'react';
-import MapView, { Callout, Marker, Polyline, PROVIDER_GOOGLE, Region } from 'react-native-maps';
-import { Alert, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native';
-import { useNavigation } from 'expo-router';
-import { markers } from '../../assets/markers';
-import * as Location from 'expo-location';
+import React, { useEffect, useState } from "react";
+import { MapView, Camera, UserLocation, PointAnnotation, ShapeSource, LineLayer } from "@maplibre/maplibre-react-native";
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Linking } from "react-native";
+import * as Location from "expo-location";
+import Constants from "expo-constants";
+import * as FileSystem from "expo-file-system/legacy";
+import { markers } from "../../assets/markers";
+import { useNetwork } from "../context/NetworkContext";
+import NetworkStatusIndicator from "../components/NetworkStatusIndicator";
 
-const INITIAL_REGION = {
-  latitude: 7.241334844687561,
-  latitudeDelta: 10.751601205428543,
-  longitude: 2,
-  longitudeDelta: 55
-};
+const MAPTILER_KEY = Constants.expoConfig.extra.MAPTILER_KEY;
+
+// Fallback local tiles directory (for offline use)
+const TILE_CACHE_PATH = `${FileSystem.documentDirectory}maptiler_cache`;
+
+console.log('TILE_CACHE_PATH (documentDirectory-based):', TILE_CACHE_PATH);
 
 export default function OneStop() {
-  const mapRef = useRef<any>(null);
-  const navigation = useNavigation();
   const [userLocation, setUserLocation] = useState<any>(null);
-  const [selectedMarker, setSelectedMarker] = useState<any>(null);
-  const [route, setRoute] = useState<any>(null);
+  const [offlineReady, setOfflineReady] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [routeDetails, setRouteDetails] = useState<any>(null);
+  const { isConnected } = useNetwork();
+  const [offlineTilesDownloaded, setOfflineTilesDownloaded] = useState(false);
+  const [selectedMarker, setSelectedMarker] = useState<any>(null);
+  const [routeCoords, setRouteCoords] = useState<Array<[number, number]>>([]);
+  const [showRoute, setShowRoute] = useState(false);
+  const [lastKnownLocation, setLastKnownLocation] = useState<any>(null);
+  const [locationSubscription, setLocationSubscription] = useState<any>(null);
 
   useEffect(() => {
-    navigation.setOptions({
-      headerRight: () => (
-        <TouchableOpacity onPress={focusMap}>
-          <View style={{ padding: 10 }}>
-            <Text>Focus</Text>
-          </View>
-        </TouchableOpacity>
-      )
-    });
     requestLocationPermission();
+    prepareOfflineTiles();
+
+    return () => {
+      // cleanup location watcher
+      if (locationSubscription && typeof locationSubscription.remove === 'function') {
+        locationSubscription.remove();
+      }
+    };
   }, []);
 
+  useEffect(() => {
+    if (isConnected && !offlineTilesDownloaded && userLocation) {
+      downloadOfflineTiles();
+    }
+  }, [isConnected, offlineTilesDownloaded, userLocation]);
+
   const requestLocationPermission = async () => {
+    let { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission denied", "Location permission is required to show your position.");
+      return;
+    }
+
     try {
-      let { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission to access location was denied');
-        return;
+      // Try to get a last known position quickly
+      const last = await Location.getLastKnownPositionAsync();
+      if (last && last.coords) {
+        setLastKnownLocation({ latitude: last.coords.latitude, longitude: last.coords.longitude });
+        // set initial displayed position if not yet set
+        if (!userLocation) {
+          setUserLocation({ latitude: last.coords.latitude, longitude: last.coords.longitude });
+        }
       }
 
-      let location = await Location.getCurrentPositionAsync({});
-      setUserLocation({
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-      });
-    } catch (error) {
-      console.error('Error getting location:', error);
-    }
-  };
-
-  const focusMap = () => {
-    if (userLocation) {
-      mapRef.current?.animateToRegion({
-        ...userLocation,
-        latitudeDelta: 0.1,
-        longitudeDelta: 0.1
-      });
-    } else {
-      mapRef.current?.animateToRegion(INITIAL_REGION);
-    }
-  };
-
-  const onMarkerSelected = async (marker: any) => {
-    setSelectedMarker(marker);
-    
-    if (userLocation) {
-      await getRouteToMarker(marker);
-    } else {
-      Alert.alert(
-        'Location Required',
-        'We need your location to calculate the route. Please enable location services.',
-        [{ text: 'OK' }]
+      // Start continuous high-accuracy watch so we get the true GPS fix
+      const sub = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.Highest,
+          timeInterval: 3000, // ms
+          distanceInterval: 1, // meters
+        },
+        (loc) => {
+          if (loc && loc.coords) {
+            const newLoc = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+            setUserLocation(newLoc);
+            setLastKnownLocation(newLoc);
+            // debug
+            console.log('Location update', newLoc, 'accuracy', loc.coords.accuracy);
+          }
+        }
       );
+      setLocationSubscription(sub);
+    } catch (e) {
+      console.warn('Failed to start location watch', e);
+      // fallback: single getCurrentPosition
+      try {
+        const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        setUserLocation({ latitude: location.coords.latitude, longitude: location.coords.longitude });
+        setLastKnownLocation({ latitude: location.coords.latitude, longitude: location.coords.longitude });
+      } catch (err) {
+        console.warn('Failed to get current position', err);
+      }
     }
   };
 
-  // Get route using free OSRM service
-  const getRouteToMarker = async (marker: any) => {
-    if (!userLocation) return;
+  // Create local folder for offline tiles
+  const prepareOfflineTiles = async () => {
+    try {
+      const dir = await FileSystem.getInfoAsync(TILE_CACHE_PATH);
+      if (!dir.exists) {
+        await FileSystem.makeDirectoryAsync(TILE_CACHE_PATH, { intermediates: true });
+      }
+      setOfflineReady(true);
+    } catch (error) {
+      console.warn("Error preparing offline cache:", error);
+    }
+  };
 
+  // Download tiles for offline use
+  const downloadOfflineTiles = async () => {
+    if (!userLocation) return;
+    
     setLoading(true);
     try {
-      const origin = {
-        latitude: userLocation.latitude,
-        longitude: userLocation.longitude
+      console.log('Starting offline tile download. TILE_CACHE_PATH=', TILE_CACHE_PATH, 'userLocation=', userLocation);
+      // Define the area around the user's location (approximately 10km radius)
+      const bounds = {
+        minLat: userLocation.latitude - 0.1,
+        maxLat: userLocation.latitude + 0.1,
+        minLon: userLocation.longitude - 0.1,
+        maxLon: userLocation.longitude + 0.1
       };
-      const destination = {
-        latitude: marker.latitude,
-        longitude: marker.longitude
-      };
 
-      // Using OSRM (Open Source Routing Machine) - completely free
-      const url = `https://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}?overview=full&geometries=geojson`;
-      
-      const response = await fetch(url);
-      const data = await response.json();
+      // Download tiles for zoom levels 11-15
+      for (let z = 11; z <= 15; z++) {
+        const tilePath = `${TILE_CACHE_PATH}/z${z}`;
+        await FileSystem.makeDirectoryAsync(tilePath, { intermediates: true });
+        console.log(`Preparing tiles for z=${z}, tilePath=${tilePath}`);
+        // Calculate tile coordinates for the bounding box
+        const minTileX = Math.floor((bounds.minLon + 180) / 360 * Math.pow(2, z));
+        const maxTileX = Math.floor((bounds.maxLon + 180) / 360 * Math.pow(2, z));
+        const minTileY = Math.floor((1 - Math.log(Math.tan(bounds.maxLat * Math.PI / 180) + 1 / Math.cos(bounds.maxLat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, z));
+        const maxTileY = Math.floor((1 - Math.log(Math.tan(bounds.minLat * Math.PI / 180) + 1 / Math.cos(bounds.minLat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, z));
 
-      if (data.code === 'Ok' && data.routes.length > 0) {
-        const routeData = data.routes[0];
-        const coordinates = routeData.geometry.coordinates.map((coord: any) => ({
-          latitude: coord[1],
-          longitude: coord[0]
-        }));
+        // Download tiles
+        for (let x = minTileX; x <= maxTileX; x++) {
+          for (let y = minTileY; y <= maxTileY; y++) {
+            const vectorUrl = `https://api.maptiler.com/maps/streets-v2/tiles/${z}/${x}/${y}.mvt?key=${MAPTILER_KEY}`;
+            const rasterUrl = `https://api.maptiler.com/maps/streets-v2/tiles/${z}/${x}/${y}@2x.png?key=${MAPTILER_KEY}`;
+            // Use z/x/y directory structure which MapLibre expects for tile templates
+            const dirX = `${tilePath}/${x}`;
+            const vectorFileName = `${dirX}/${y}.mvt`;
+            const rasterFileName = `${dirX}/${y}.png`;
 
-        setRouteDetails({
-          distance: (routeData.distance / 1000).toFixed(1), // km
-          duration: Math.ceil(routeData.duration / 60), // minutes
-        });
+            // ensure x directory exists
+            const dirInfo = await FileSystem.getInfoAsync(dirX);
+            if (!dirInfo.exists) {
+              await FileSystem.makeDirectoryAsync(dirX, { intermediates: true });
+            }
 
-        setRoute(coordinates);
-        
-        // Fit map to show the entire route
-        mapRef.current?.fitToCoordinates(coordinates, {
-          edgePadding: { top: 50, right: 50, bottom: 100, left: 50 },
-          animated: true,
-        });
-
-        Alert.alert(
-          'Route Found',
-          `Route to ${marker.name} calculated!\n\nDistance: ${(routeData.distance / 1000).toFixed(1)} km\nEstimated time: ${Math.ceil(routeData.duration / 60)} min`,
-          [{ text: 'OK' }]
-        );
-      } else {
-        throw new Error('Could not calculate route');
+            const vectorFileInfo = await FileSystem.getInfoAsync(vectorFileName);
+            const rasterFileInfo = await FileSystem.getInfoAsync(rasterFileName);
+            if (!vectorFileInfo.exists) {
+              try { 
+                await FileSystem.downloadAsync(vectorUrl, vectorFileName);
+                console.log('Downloaded vector tile', vectorFileName);
+              } catch (e) { console.warn('Vector tile download failed', vectorUrl, e); }
+            } else {
+              // console.log('Vector tile exists', vectorFileName);
+            }
+            if (!rasterFileInfo.exists) {
+              try { 
+                await FileSystem.downloadAsync(rasterUrl, rasterFileName);
+                console.log('Downloaded raster tile', rasterFileName);
+              } catch (e) { console.warn('Raster tile download failed', rasterUrl, e); }
+            } else {
+              // console.log('Raster tile exists', rasterFileName);
+            }
+          }
+        }
       }
+      // List sample cached files for z=11 to help debugging
+      try {
+        const sampleDir = `${TILE_CACHE_PATH}/z11`;
+        const sampleList = await FileSystem.readDirectoryAsync(sampleDir);
+        console.log('Sample z11 directory contents count=', sampleList.length, 'sample files=', sampleList.slice(0,10));
+      } catch (e) {
+        console.warn('Failed to list sample cache directory', e);
+      }
+      setOfflineTilesDownloaded(true);
     } catch (error) {
-      console.error('Error fetching route:', error);
-      Alert.alert(
-        'Routing Error',
-        'Could not calculate route. Please check your connection and try again.',
-        [{ text: 'OK' }]
-      );
+      console.warn("Error downloading offline tiles:", error);
+      Alert.alert("Error", "Failed to download offline map tiles");
     } finally {
       setLoading(false);
     }
   };
 
-  const clearRoute = () => {
-    setRoute(null);
-    setSelectedMarker(null);
-    setRouteDetails(null);
-    focusMap();
+  // Compute an online route (OSRM public) - fallback to offline if it fails
+  const computeRouteOnline = async (from: { latitude: number; longitude: number }, to: { latitude: number; longitude: number }) => {
+    try {
+      const url = `http://router.project-osrm.org/route/v1/driving/${from.longitude},${from.latitude};${to.longitude},${to.latitude}?overview=full&geometries=geojson`;
+      console.log('computeRouteOnline requesting', url);
+      const resp = await fetch(url);
+      const data = await resp.json();
+      console.log('computeRouteOnline response', data && data.code, data && data.routes && data.routes.length);
+      if (data && data.routes && data.routes.length > 0) {
+        const coords: Array<[number, number]> = data.routes[0].geometry.coordinates;
+        setRouteCoords(coords);
+        setShowRoute(true);
+        return true;
+      }
+    } catch (e) {
+      console.warn('Online routing failed', e);
+    }
+    return false;
   };
 
-  const calloutPressed = (marker: any) => {
-    Alert.alert(
-      marker.name,
-      'What would you like to do?',
-      [
+  // Compute an offline straight-line route by interpolating N points
+  const computeRouteOffline = (from: { latitude: number; longitude: number }, to: { latitude: number; longitude: number }, segments = 64) => {
+    const coords: Array<[number, number]> = [];
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const lat = from.latitude + (to.latitude - from.latitude) * t;
+      const lon = from.longitude + (to.longitude - from.longitude) * t;
+      coords.push([lon, lat]);
+    }
+    setRouteCoords(coords);
+    setShowRoute(true);
+  };
+
+  const onMarkerPress = async (marker: any) => {
+  console.log('onMarkerPress called for', marker.name);
+    setSelectedMarker(marker);
+    // decide source location: prefer live userLocation when available, else lastKnownLocation
+    const source = userLocation ?? lastKnownLocation;
+    if (!source) {
+      Alert.alert('Location unavailable', 'Cannot compute route because current location is unknown.');
+      return;
+    }
+
+    // Try online routing first if connected
+    if (isConnected) {
+      const ok = await computeRouteOnline(source, { latitude: marker.latitude, longitude: marker.longitude });
+  console.log('computeRouteOnline result', ok);
+      if (!ok) {
+        // fallback to offline straight-line
+        computeRouteOffline(source, { latitude: marker.latitude, longitude: marker.longitude });
+      }
+    } else {
+      // offline: use lastKnownLocation as source if exists
+      const src = lastKnownLocation ?? source;
+      computeRouteOffline(src, { latitude: marker.latitude, longitude: marker.longitude });
+    }
+  };
+
+  // Get appropriate map style based on connection status
+  const getMapStyle = () => {
+    if (isConnected) {
+      return `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`;
+    }
+    // Use local raster XYZ tiles for offline mode (MapLibre handles raster tiles reliably)
+      return {
+      version: 8,
+      sources: {
+        'offline-tiles-raster': {
+          type: 'raster',
+          // Android/iOS MapLibre may require file:// prefix for local files. Provide both templates (file:// first).
+          tiles: [`file://${TILE_CACHE_PATH}/z{z}/{x}/{y}.png`, `${TILE_CACHE_PATH}/z{z}/{x}/{y}.png`],
+          tileSize: 256,
+          maxzoom: 15,
+          minzoom: 11
+        }
+      },
+      layers: [
         {
-          text: 'Get Directions',
-          onPress: () => onMarkerSelected(marker)
-        },
-        {
-          text: 'Clear Route',
-          onPress: clearRoute,
-          style: 'destructive'
-        },
-        {
-          text: 'Cancel',
-          style: 'cancel'
+          id: 'raster-tiles',
+          type: 'raster',
+          source: 'offline-tiles-raster',
+          paint: {}
         }
       ]
-    );
-  };
-
-  const onRegionChange = (region: Region) => {
-    console.log(region);
-  };
-
-  // Calculate straight-line distance
-  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 6371; // Earth's radius in km
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return (R * c).toFixed(1);
+    };
   };
 
   return (
     <View style={{ flex: 1 }}>
       <MapView
-        style={StyleSheet.absoluteFillObject}
-        initialRegion={INITIAL_REGION}
-        showsUserLocation
-        showsMyLocationButton
-        provider={PROVIDER_GOOGLE}
-        ref={mapRef}
-        onRegionChangeComplete={onRegionChange}
+        style={styles.map}
+        mapStyle={getMapStyle()}
+        zoomEnabled
+        compassEnabled
+        localizeLabels
       >
-        {/* User Location Marker */}
         {userLocation && (
-          <Marker
-            coordinate={userLocation}
-            title="Your Location"
-            pinColor="blue"
+          <Camera
+            zoomLevel={13}
+            centerCoordinate={[userLocation.longitude, userLocation.latitude]}
           />
         )}
 
-        {/* Route Polyline */}
-        {route && (
-          <Polyline
-            coordinates={route}
-            strokeColor="#5B6BFF"
-            strokeWidth={5}
-          />
-        )}
+        {/* Show user location */}
+        <UserLocation visible={true} showsUserHeadingIndicator={true} />
 
-        {/* Markers */}
+        {/* Add markers from assets */}
         {markers.map((marker, index) => (
-          <Marker
-            key={index}
-            title={marker.name}
-            coordinate={marker}
-            onPress={() => onMarkerSelected(marker)}
-            pinColor={selectedMarker?.name === marker.name ? "#FF6B6B" : "#5B6BFF"}
+          <PointAnnotation
+            key={`marker-${index}`}
+            id={`marker-${index}`}
+            coordinate={[marker.longitude, marker.latitude]}
+            onSelected={() => onMarkerPress(marker)}
           >
-            <Callout onPress={() => calloutPressed(marker)}>
-              <View style={styles.calloutContainer}>
-                <Text style={styles.calloutTitle}>{marker.name}</Text>
-                {userLocation && (
-                  <Text style={styles.calloutDistance}>
-                    {calculateDistance(
-                      userLocation.latitude,
-                      userLocation.longitude,
-                      marker.latitude,
-                      marker.longitude
-                    )} km away
-                  </Text>
-                )}
-                {routeDetails && selectedMarker?.name === marker.name && (
-                  <Text style={styles.calloutRouteDetails}>
-                    📍 {routeDetails.distance} km • ⏱️ {routeDetails.duration} min
-                  </Text>
-                )}
-                <Text style={styles.calloutHint}>
-                  Tap for directions
-                </Text>
-              </View>
-            </Callout>
-          </Marker>
+            <View style={styles.markerContainer}>
+              <Ionicons name="location-sharp" size={22} color="#2A4D9B" style={styles.markerIcon} />
+              <View style={styles.markerDot} />
+              <Text style={styles.markerLabel}>{marker.name}</Text>
+            </View>
+          </PointAnnotation>
         ))}
+        {showRoute && routeCoords.length > 0 && (
+          <ShapeSource id="routeSource" shape={{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: routeCoords } }}>
+            <LineLayer id="routeLine" style={{ lineColor: '#ff3b30', lineWidth: 4 }} />
+          </ShapeSource>
+        )}
       </MapView>
 
-      {/* Bottom Control Panel */}
-      <View style={styles.bottomPanel}>
-        {selectedMarker && route && (
-          <View style={styles.routeInfo}>
-            <Text style={styles.routeTitle}>Route to {selectedMarker.name}</Text>
-            {routeDetails && (
-              <Text style={styles.routeDetails}>
-                📍 {routeDetails.distance} km • ⏱️ {routeDetails.duration} min
-              </Text>
-            )}
-            <View style={styles.buttonRow}>
-              <TouchableOpacity 
-                style={[styles.button, styles.secondaryButton]} 
-                onPress={clearRoute}
-              >
-                <Text style={styles.secondaryButtonText}>Clear Route</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.button, styles.primaryButton]} 
-                onPress={() => onMarkerSelected(selectedMarker)}
-                disabled={loading}
-              >
-                {loading ? (
-                  <ActivityIndicator color="white" size="small" />
-                ) : (
-                  <Text style={styles.buttonText}>Recalculate</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {!selectedMarker && (
-          <View style={styles.instructionPanel}>
-            <Text style={styles.instructionText}>
-              {userLocation 
-                ? 'Tap any marker to get directions' 
-                : 'Getting your location...'
-              }
+      {/* Status panel */}
+      <View style={styles.statusPanel}>
+        <NetworkStatusIndicator />
+        <View style={styles.statusContent}>
+          {loading ? (
+            <ActivityIndicator size="small" color="#5B6BFF" />
+          ) : (
+            <Text style={styles.statusText}>
+              {offlineTilesDownloaded 
+                ? "Offline maps available ✅" 
+                : offlineReady 
+                  ? "Offline maps ready for download" 
+                  : "Preparing offline maps..."}
             </Text>
-            {!userLocation && (
-              <TouchableOpacity 
-                style={[styles.button, styles.primaryButton]} 
-                onPress={requestLocationPermission}
-              >
-                <Text style={styles.buttonText}>Enable Location</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
+          )}
+        </View>
       </View>
-
-      {/* Loading Overlay */}
-      {loading && (
-        <View style={styles.loadingOverlay}>
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#5B6BFF" />
-            <Text style={styles.loadingText}>Calculating route...</Text>
+      {/* Marker info / routing panel */}
+      {selectedMarker && (
+        <View style={styles.infoPanel}>
+          <Text style={styles.infoTitle}>{selectedMarker.name}</Text>
+          <Text style={styles.infoText}>{selectedMarker.type} — {selectedMarker.services}</Text>
+          {selectedMarker.phone ? (
+            <Text style={[styles.infoText, { fontWeight: '700' }]}>Phone: {selectedMarker.phone}</Text>
+          ) : null}
+          <View style={styles.infoActions}>
+            <TouchableOpacity style={styles.routeButton} onPress={() => onMarkerPress(selectedMarker)}>
+              <Text style={styles.routeButtonText}>Route</Text>
+            </TouchableOpacity>
+            {selectedMarker.phone ? (
+              <TouchableOpacity style={[styles.routeButton, { backgroundColor: '#28A745' }]} onPress={() => { Linking.openURL(`tel:${selectedMarker.phone}`); }}>
+                <Text style={styles.routeButtonText}>Call</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity style={styles.closeButton} onPress={() => { setSelectedMarker(null); setShowRoute(false); }}>
+              <Text style={styles.closeButtonText}>Close</Text>
+            </TouchableOpacity>
           </View>
         </View>
       )}
@@ -316,113 +361,94 @@ export default function OneStop() {
 }
 
 const styles = StyleSheet.create({
-  calloutContainer: {
-    padding: 10,
-    minWidth: 200,
+  map: {
+    flex: 1,
   },
-  calloutTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 4,
+  markerContainer: {
+    alignItems: "center",
   },
-  calloutDistance: {
-    fontSize: 14,
-    color: '#5B6BFF',
-    marginBottom: 4,
+  markerDot: {
+    width: 10,
+    height: 10,
+    backgroundColor: "#5B6BFF",
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: "white",
   },
-  calloutRouteDetails: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 4,
+  markerLabel: {
+    fontSize: 10,
+    color: "#333",
+    marginTop: 4,
   },
-  calloutHint: {
-    fontSize: 12,
-    color: '#999',
-    fontStyle: 'italic',
-  },
-  bottomPanel: {
+  markerIcon: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+    top: -10,
+    left: -11,
+    zIndex: 10,
+  },
+  infoPanel: {
+    position: 'absolute',
+    bottom: 100,
+    left: 20,
+    right: 20,
     backgroundColor: 'white',
-    padding: 16,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    padding: 12,
+    borderRadius: 8,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowRadius: 6,
+    elevation: 4,
   },
-  routeInfo: {
-    alignItems: 'center',
+  infoTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 6,
   },
-  routeTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
+  infoText: {
+    fontSize: 12,
+    color: '#444',
     marginBottom: 8,
-    textAlign: 'center',
   },
-  routeDetails: {
-    fontSize: 16,
-    color: '#5B6BFF',
-    fontWeight: '500',
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  instructionPanel: {
-    alignItems: 'center',
-  },
-  instructionText: {
-    fontSize: 16,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 12,
-  },
-  buttonRow: {
+  infoActions: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    width: '100%',
   },
-  button: {
-    paddingVertical: 12,
+  routeButton: {
+    backgroundColor: '#2A4D9B',
+    paddingVertical: 8,
     paddingHorizontal: 16,
-    borderRadius: 8,
-    minWidth: 140,
-    alignItems: 'center',
+    borderRadius: 6,
   },
-  primaryButton: {
-    backgroundColor: '#5B6BFF',
-  },
-  secondaryButton: {
-    backgroundColor: '#F0F0F0',
-  },
-  buttonText: {
+  routeButtonText: {
     color: 'white',
-    fontWeight: 'bold',
-    fontSize: 14,
+    fontWeight: '600',
   },
-  secondaryButtonText: {
-    color: '#666',
-    fontWeight: 'bold',
-    fontSize: 14,
+  closeButton: {
+    backgroundColor: '#eee',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 6,
   },
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    justifyContent: 'center',
-    alignItems: 'center',
+  closeButtonText: {
+    color: '#333',
+    fontWeight: '600',
   },
-  loadingContainer: {
-    backgroundColor: 'white',
-    padding: 20,
-    borderRadius: 12,
-    alignItems: 'center',
+  statusPanel: {
+    position: "absolute",
+    bottom: 20,
+    left: 20,
+    backgroundColor: "rgba(255,255,255,0.9)",
+    padding: 10,
+    borderRadius: 10,
+    width: "auto",
+    minWidth: 200,
   },
-  loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: '#666',
+  statusContent: {
+    marginTop: 8,
+    alignItems: "center",
+  },
+  statusText: {
+    fontSize: 12,
+    color: "#333",
   },
 });

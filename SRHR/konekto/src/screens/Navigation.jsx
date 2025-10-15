@@ -7,6 +7,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import Home from './Home';
 import Chatbot from './Chatbot';
 import OneStopMap from './OneStop';
+import EmergencyScreen from './EmergencyScreen';
 
 
 const Stack = createNativeStackNavigator();
@@ -30,6 +31,12 @@ const Navigation = () => {
           <Stack.Screen 
             name="OneStopMap" 
             component={OneStopMap}
+            options={{ headerShown: false }}
+          />
+
+          <Stack.Screen 
+            name="Hotlines" 
+            component={EmergencyScreen}
             options={{ headerShown: false }}
           />
         </Stack.Navigator>

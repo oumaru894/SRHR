@@ -43,6 +43,7 @@ if not app.debug:
 
 # Configuration
 LLAMA_API_URL = os.environ.get('LLAMA_API_URL', "http://llama-cpp-python:8000/v1/chat/completions")
+
 REQUEST_TIMEOUT = int(os.environ.get('REQUEST_TIMEOUT', '120'))
 MAX_RESPONSE_LENGTH = int(os.environ.get('MAX_RESPONSE_LENGTH', '5000'))
 
@@ -79,31 +80,24 @@ def validate_prompt(prompt):
     return True, prompt.strip()
 
 def make_ollama_request(prompt):
-    """Make request to local Llama.cpp API"""
+    """Make request to hosted Llama.cpp /v1/completions endpoint"""
     start_time = time.time()
 
     payload = {
-        "model": "mistral-7b-instruct",
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.7,
-        "max_tokens": 512,
-        "stream": False
+        "prompt": f"\n\n### Instructions:\n{prompt}\n\n### Response:\n",
+        "stop": ["\n", "###"],
     }
 
     try:
         response = requests.post(
-            LLAMA_API_URL,
+            "https://llama-cpp-python-production.up.railway.app/v1/completions",
             json=payload,
             timeout=REQUEST_TIMEOUT
         )
-
         response.raise_for_status()
         data = response.json()
 
-        bot_response = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        bot_response = data.get("choices", [{}])[0].get("text", "")
         processing_time = time.time() - start_time
         app.logger.info(f"Llama request completed in {processing_time:.2f}s")
 
@@ -112,7 +106,7 @@ def make_ollama_request(prompt):
     except requests.exceptions.Timeout:
         raise OllamaServiceError("Request timeout - please try again")
     except requests.exceptions.ConnectionError:
-        raise OllamaServiceError("Cannot connect to local Llama API")
+        raise OllamaServiceError("Cannot connect to Llama API")
     except Exception as e:
         app.logger.error(f"Unexpected error: {e}")
         raise OllamaServiceError("Internal server error")

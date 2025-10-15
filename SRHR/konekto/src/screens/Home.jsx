@@ -73,7 +73,7 @@ export default function Home() {
                     title="Emergency Hotlines"
                     titleTextStyle={{ color: "#D23A3A" }}
                     onPress={() => {
-                        console.log("Emergency hotlines pressed");
+                        navigation.navigate('Hotlines');
                     }}
                     accessibilityLabel="Emergency hotlines"
                     />
